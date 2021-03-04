@@ -1,0 +1,135 @@
+from scipy.spatial import distance as dist
+from imutils import face_utils
+import imutils
+import dlib
+import cv2
+import winsound
+import requests 
+import json
+import unicodedata
+
+res = requests.get('https://ipinfo.io/')
+data = res.json()
+
+city = data['city']
+normalized = unicodedata.normalize('NFD', city)
+new_city = u"".join([c for c in normalized if not unicodedata.combining(c)])
+
+# mention url 
+url = "https://www.fast2sms.com/dev/bulk"
+
+
+
+
+
+frequency = 2500
+duration = 1000
+cnt = 0
+flag = 1
+
+def eyeAspectRatio(eye):
+    A = dist.euclidean(eye[1], eye[5])
+    B = dist.euclidean(eye[2], eye[4])
+    C = dist.euclidean(eye[0], eye[3])
+    ear = (A + B) / (2.0 * C)
+    return ear
+
+count = 0
+earThresh = 0.3 #distance between vertical eye coordinate Threshold
+earFrames = 48 #consecutive frames for eye closure
+shapePredictor = "shape_predictor_68_face_landmarks.dat"
+
+cam = cv2.VideoCapture(0)
+detector = dlib.get_frontal_face_detector()
+predictor = dlib.shape_predictor(shapePredictor)
+
+#get the coord of left & right eye
+(lStart, lEnd) = face_utils.FACIAL_LANDMARKS_IDXS["left_eye"]
+(rStart, rEnd) = face_utils.FACIAL_LANDMARKS_IDXS["right_eye"]
+blink=0
+while True:
+    _, frame = cam.read()
+    frame = imutils.resize(frame, width=450)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    rects = detector(gray, 0)
+
+    for rect in rects:
+        shape = predictor(gray, rect)
+        shape = face_utils.shape_to_np(shape)
+
+        leftEye = shape[lStart:lEnd]
+        rightEye = shape[rStart:rEnd]
+        leftEAR = eyeAspectRatio(leftEye)
+        rightEAR = eyeAspectRatio(rightEye)
+
+        ear = (leftEAR + rightEAR) / 2.0
+
+        leftEyeHull = cv2.convexHull(leftEye)
+        rightEyeHull = cv2.convexHull(rightEye)
+        cv2.drawContours(frame, [leftEyeHull], -1, (0, 0, 255), 1)
+        cv2.drawContours(frame, [rightEyeHull], -1, (0, 0, 255), 1)
+
+        if ear < earThresh:
+            count += 1
+
+            if count >= earFrames:
+                cv2.putText(frame, "DROWSINESS DETECTED", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                winsound.Beep(frequency, duration)
+                cnt += 1
+            if cnt >= 5 and cnt <7:
+                
+                location = data['loc'].split(',')
+                latitude = location[0]
+                longitude = location[1]
+
+                # create a dictionary 
+                my_data = { 
+                    # Your default Sender ID 
+                'sender_id': 'FSTSMS', 
+	
+                    # Put your message here! 
+                'message': f"latitude:{latitude}\nlongitude:{longitude}\ncity:{new_city}", 
+	
+                'language': 'english', 
+                'route': 'p', 
+	
+                # You can send sms to multiple numbers 
+                # separated by comma. 
+                'numbers': '9361376830'	} 
+
+                # create a dictionary 
+                headers = { 
+                    'authorization': 'QsOVMJCumhkN2LwX3geUfx5DHpb0lyBz9F86YSAqIEd14KcG7avIhsOHtzRPZXNix4Yuc9AEVJC6gqlm', 
+                    'Content-Type': "application/x-www-form-urlencoded", 
+                    'Cache-Control': "no-cache"}
+
+                # make a post request 
+                response = requests.request("POST", 
+							url, 
+							data = my_data, 
+							headers = headers) 
+                # load json data from source 
+                returned_msg = json.loads(response.text) 
+
+                # print the send message 
+                print(returned_msg['message'])
+                    
+        else:
+            if count>earFrames:
+                blink+=1
+                flag = 1
+                cnt = 0
+            count = 0
+    
+
+    cv2.imshow("Frame", frame)
+    key = cv2.waitKey(1) & 0xFF
+
+    if key == ord("q"):
+        break
+        
+
+cam.release()
+cv2.destroyAllWindows()
